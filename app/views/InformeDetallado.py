@@ -1,5 +1,6 @@
 import tkinter as tk
 from tkinter import ttk
+import polars as pl
 
 class InformeDetallado(tk.Frame):
     def __init__(self, parent, controller):
@@ -7,85 +8,117 @@ class InformeDetallado(tk.Frame):
         self.controller = controller
         self.configure(bg="#f4f7f6")
 
-        # 1. Obtener el año más reciente dinámicamente
+        # 1. Obtener datos y determinar el año del informe
+        self.df = self.controller.obtener_datos_crudos()
         try:
-            df = self.controller.obtener_inventario()
-            self.anio_reciente = df.select("Año").max().to_series()[0]
+            # Intentamos obtener el año que el usuario analizó en la VistaWish
+            w_data = self.controller.almacen_exito.get("wishlist_reciente")
+            if w_data:
+                self.anio_act = w_data["anio"]
+            else:
+                self.anio_act = self.df.select(pl.col("Año")).max().to_series()[0]
         except:
-            self.anio_reciente = "2024"
+            self.anio_act = "Actual"
 
-        datos_mercado = self.controller.almacen_exito
+        # 2. Configurar la interfaz con Scroll
+        self.setup_ui()
         
-        # --- HEADER ---
-        header = tk.Frame(self, bg="#34495e", pady=20)
-        header.pack(fill="x")
-        tk.Label(header, text=f"📋 REPORTE DE ESTRATEGIA: LANZAMIENTO {self.anio_reciente}", 
-                 font=("Helvetica", 18, "bold"), fg="white", bg="#34495e").pack()
+        # 3. Generar el contenido
+        self.generar_reporte_completo()
 
-        # --- CONTENEDOR CON SCROLL ---
+    def setup_ui(self):
+        """Crea el header y el área de scroll."""
+        # Header Estilo Alva Majo
+        header = tk.Frame(self, bg="#2c3e50", pady=25)
+        header.pack(fill="x")
+        
+        tk.Label(header, text="ESTRATEGIA FINAL DE LANZAMIENTO", 
+                 font=("Helvetica", 18, "bold"), fg="#ecf0f1", bg="#2c3e50").pack()
+        tk.Label(header, text=f"Reporte Consolidado - Periodo {self.anio_act}", 
+                 font=("Helvetica", 10), fg="#bdc3c7", bg="#2c3e50").pack()
+
+        # Sistema de Scroll
         self.canvas = tk.Canvas(self, bg="#f4f7f6", highlightthickness=0)
         self.scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
-        self.scrollable_frame = tk.Frame(self.canvas, bg="#f4f7f6")
+        self.root_frame = tk.Frame(self.canvas, bg="#f4f7f6")
 
-        self.scrollable_frame.bind(
+        self.root_frame.bind(
             "<Configure>",
             lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all"))
         )
 
-        self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
+        self.canvas.create_window((0, 0), window=self.root_frame, anchor="nw")
         self.canvas.configure(yscrollcommand=self.scrollbar.set)
+
         self.canvas.pack(side="left", fill="both", expand=True, padx=20)
         self.scrollbar.pack(side="right", fill="y")
 
-        # 2. Dibujar las secciones (Notes)
-        self.dibujar_secciones(datos_mercado)
+    def generar_reporte_completo(self):
+        """Genera las 3 secciones clave del informe."""
+        
+        # --- DATOS DE ENTRADA ---
+        g = self.controller.almacen_exito.get("semana_1", {"genero": "No definido", "precio": 0.0})
+        w = self.controller.almacen_exito.get("wishlist_reciente")
 
-    def dibujar_secciones(self, datos):
-        # --- PARTE 1: INFORME DE GÉNERO (DATOS VISTA 2) ---
-        if datos["semana_1"]["genero"]:
-            contenido_genero = (
-                f"Tras analizar el mercado del año {self.anio_reciente}, se concluye:\n\n"
-                f"• GÉNERO DOMINANTE: {datos['semana_1']['genero']}\n"
-                f"• PUNTO DULCE (Día 1): ${datos['dia_1']['precio']:.2f} USD\n"
-                f"• PUNTO DULCE (Semana 1): ${datos['semana_1']['precio']:.2f} USD\n\n"
-                f"Nota: Este género presenta la mejor relación de ventas vs. cantidad de juegos "
-                f"desarrollados, lo que indica una demanda insatisfecha o alta rotación."
+        # --- PARTE 1: MERCADO Y POSICIONAMIENTO ---
+        txt_mercado = (
+            f"El análisis de mercado identifica a '{g['genero']}' como el nicho objetivo.\n\n"
+            f"• Punto Dulce de Precio: ${g['precio']:.2f} USD.\n"
+            f"• Competitividad: Este precio se sitúa en la mediana del género, lo que "
+            f"favorece la conversión sin sacrificar el valor percibido del arte."
+        )
+        self.agregar_nota("PARTE 1: Análisis de Género y Mercado", txt_mercado, "#16a085")
+
+        # --- PARTE 2: MÉTRICAS DE IMPACTO (DÍA 1 Y SEMANA 1) ---
+        if w:
+            # Cálculo de relevancia del día 1
+            rel_d1 = (w['d1_num'] / w['s1_num'] * 100) if w['s1_num'] > 0 else 0
+            
+            txt_impacto = (
+                f"Conversión basada en la Mediana de Wishlists ({w['wish']:,} seguidores):\n\n"
+                f"• IMPACTO DÍA 1: {w['d1_num']:,.0f} ventas ({w['d1_porc']:.2f}% de conversión).\n"
+                f"• TOTAL SEMANA 1: {w['s1_num']:,.0f} ventas ({w['s1_porc']:.2f}% de conversión).\n"
+                f"• PESO DEL LANZAMIENTO: El primer día generó el {rel_d1:.1f}% de las ventas semanales.\n\n"
+                f"• OPORTUNIDAD (REMANENTE): {w['rem_num']:,.0f} usuarios ({w['rem_porc']:.2f}%) "
+                f"están en tu lista de deseados pero aún no han pasado por caja."
             )
         else:
-            contenido_genero = "⚠️ No se han procesado datos en la Vista 2 (Informe de Género)."
-
-        self.crear_nota("PARTE 1: Análisis de Género y Mercado", contenido_genero, "#16a085")
-
-        # --- PARTE 2: INFORME DE WISHLIST (CONECTADO A VISTA WISH) ---
-        # Aquí puedes usar el mismo sistema de 'almacen_exito' para traer datos de VistaWish
-        contenido_wish = (
-            "Este módulo analiza el impacto de los seguidores previos al lanzamiento.\n\n"
-            "Estado: Sincronizado con el algoritmo de conversión. El volumen de Wishlists "
-            "determinará si el Punto Dulce es alcanzable en el corto plazo."
-        )
-        self.crear_nota("PARTE 2: Informe de Wishlist e Impacto", contenido_wish, "#2980b9")
-
-        # --- PARTE 3: PREDICCIÓN FINAL ---
-        contenido_pred = (
-            "Estimación de ingresos basada en regresión lineal y análisis correlacional.\n\n"
-            "Resultado: En espera de parámetros de entrada."
-        )
-        self.crear_nota("PARTE 3: Modelo Predictivo de Ventas", contenido_pred, "#8e44ad")
-
-    def crear_nota(self, titulo, contenido, color):
-        """Estructura visual de Note para el informe"""
-        frame_nota = tk.Frame(self.scrollable_frame, bg="white", relief="flat", padx=20, pady=15)
-        frame_nota.pack(fill="x", pady=10, padx=10)
-
-        # Barra de color lateral para indicar sección
-        lado = tk.Frame(frame_nota, bg=color, width=6)
-        lado.pack(side="left", fill="y")
-
-        cuerpo = tk.Frame(frame_nota, bg="white", padx=15)
-        cuerpo.pack(side="left", fill="both", expand=True)
-
-        tk.Label(cuerpo, text=titulo.upper(), font=("Arial", 11, "bold"), 
-                 bg="white", fg=color).pack(anchor="w")
+            txt_impacto = "⚠️ No hay datos de Wishlist. Realice el análisis en la pestaña 'VistaWish' primero."
         
-        tk.Label(cuerpo, text=contenido, font=("Segoe UI", 10), bg="white", 
-                 justify="left", wraplength=650).pack(anchor="w", pady=(8, 0))
+        self.agregar_nota("PARTE 2: Informe de Conversión y Hype", txt_impacto, "#2980b9")
+
+        # --- PARTE 3: PLAN DE ACCIÓN Y CONCLUSIONES ---
+        if w:
+            # Lógica dinámica para el plan de acción
+            status = "DÉBIL" if w['d1_porc'] < 5 else "SÓLIDO" if w['d1_porc'] < 12 else "EXPLOSIVO"
+            
+            txt_accion = (
+                f"Estado del Hype Inicial: {status} ({w['d1_porc']:.1f}% en 24h).\n\n"
+                f"1. ESTRATEGIA DE VISIBILIDAD: {'Mejorar el llamado a la acción y la cápsula' if w['d1_porc'] < 7 else 'Mantener actualizaciones constantes para alimentar el algoritmo'}.\n"
+                f"2. GESTIÓN DEL REMANENTE: El {w['rem_porc']:.1f}% de tu audiencia acumulada es 'sensible al precio'. "
+                f"Se recomienda un descuento del 20% en las próximas rebajas de Steam.\n"
+                f"3. RECOMENDACIÓN: Si el algoritmo no duplica tus ventas externas en la semana 1, revisa los tags del juego."
+            )
+        else:
+            txt_accion = "Realice los análisis previos para generar un plan de acción personalizado."
+
+        self.agregar_nota("PARTE 3: Plan de Acción Sugerido", txt_accion, "#8e44ad")
+
+    def agregar_nota(self, titulo, contenido, color):
+        """Crea un bloque visual de información."""
+        container = tk.Frame(self.root_frame, bg="white", padx=20, pady=20, 
+                             highlightbackground="#dcdde1", highlightthickness=1)
+        container.pack(fill="x", pady=10, padx=10)
+
+        # Barra de color lateral
+        tk.Frame(container, bg=color, width=6).pack(side="left", fill="y")
+
+        # Área de texto
+        text_area = tk.Frame(container, bg="white", padx=15)
+        text_area.pack(side="left", fill="both", expand=True)
+
+        tk.Label(text_area, text=titulo.upper(), font=("Arial", 11, "bold"), 
+                 fg=color, bg="white").pack(anchor="w")
+        
+        tk.Label(text_area, text=contenido, font=("Segoe UI", 10), justify="left", 
+                 bg="white", wraplength=500).pack(anchor="w", pady=(10, 0))
