@@ -122,3 +122,6 @@ class InformeDetallado(tk.Frame):
         
         tk.Label(text_area, text=contenido, font=("Segoe UI", 10), justify="left", 
                  bg="white", wraplength=500).pack(anchor="w", pady=(10, 0))
+        
+
+    
