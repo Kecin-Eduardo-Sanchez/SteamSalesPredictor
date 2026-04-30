@@ -40,7 +40,21 @@ class Vista2(tk.Frame):
         self.outer_canvas.pack(side="left", fill="both", expand=True)
         self.scrollbar.pack(side="right", fill="y")
 
+        self.outer_canvas.bind_all("<MouseWheel>", self._on_mousewheel)
+        # Para Linux (usa eventos distintos)
+        self.outer_canvas.bind_all("<Button-4>", self._on_mousewheel)
+        self.outer_canvas.bind_all("<Button-5>", self._on_mousewheel)
+
         self.actualizar_analisis()
+
+    def _on_mousewheel(self, event):
+        # En Windows, event.delta es 120 o -120. En Linux se usan Button 4/5.
+        if event.num == 4: # Linux scroll up
+            self.outer_canvas.yview_scroll(-1, "units")
+        elif event.num == 5: # Linux scroll down
+            self.outer_canvas.yview_scroll(1, "units")
+        else: # Windows / MacOS
+            self.outer_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
 
     def actualizar_analisis(self):
         for widget in self.scrollable_content.winfo_children():
@@ -60,6 +74,7 @@ class Vista2(tk.Frame):
                 frame_fase = tk.Frame(libro_frame, bg="white", relief="ridge", bd=2)
                 frame_fase.grid(row=0, column=i, sticky="nsew", padx=15, pady=10)
                 self.generar_bloque_fase(frame_fase, df_anio, col_data, nombre, color)
+                self.generar_tabla_ranking(self.scrollable_content, df_anio)
         except Exception as e: print(f"Error General: {e}")
 
     def generar_bloque_fase(self, parent, df, columna, nombre_fase, color_tema):
@@ -107,6 +122,46 @@ class Vista2(tk.Frame):
             self.crear_grafica_manual(parent, px, py, f"Punto Dulce en {gen_top}", "#e67e22", "bar")
 
         except Exception as e: print(f"Error en bloque: {e}")
+
+
+    def generar_tabla_ranking(self, parent, df):
+        """Nueva sección para listar todos los géneros y sus puntos dulces"""
+        contenedor_tabla = tk.Frame(parent, bg="white", relief="groove", bd=1)
+        contenedor_tabla.pack(fill="x", padx=25, pady=20)
+
+        tk.Label(contenedor_tabla, text="📊 DESGLOSE POR GÉNERO Y PUNTO DULCE (SEMANA 1)", 
+                 font=("Arial", 12, "bold"), bg="#34495e", fg="white", pady=10).pack(fill="x")
+
+        # Columnas de la tabla
+        cols = ("Género", "Juegos", "Ventas Totales (S1)", "Punto Dulce (USD)")
+        tree = ttk.Treeview(contenedor_tabla, columns=cols, show="headings", height=10)
+        
+        for col in cols:
+            tree.heading(col, text=col)
+            tree.column(col, anchor="center", width=150)
+        
+        # Procesamiento de datos para la tabla
+        generos_unicos = df.select(pl.col("Género (Tag)")).unique().to_series().to_list()
+        datos_tabla = []
+
+        for gen in generos_unicos:
+            df_gen = df.filter(pl.col("Género (Tag)") == gen)
+            v_totales = df_gen.select(pl.col("Ventas Sem. 1").sum()).to_series()[0]
+            num_juegos = df_gen.height
+            
+            # Calcular Punto Dulce para este género específico
+            pd_data = df_gen.group_by("Precio (USD)").agg(pl.col("Ventas Sem. 1").sum().alias("S")).sort("S", descending=True)
+            pd = pd_data[0, "Precio (USD)"] if not pd_data.is_empty() else 0.0
+            
+            datos_tabla.append((gen, num_juegos, int(v_totales), f"${pd:.2f}"))
+
+        # Ordenar por ventas de mayor a menor
+        datos_tabla.sort(key=lambda x: x[2], reverse=True)
+
+        for item in datos_tabla:
+            tree.insert("", "end", values=item)
+
+        tree.pack(fill="x", padx=10, pady=10)
 
     def crear_grafica_manual(self, parent, x_data, y_data, titulo, color, tipo):
         fig = Figure(figsize=(5, 3.5), dpi=85)
